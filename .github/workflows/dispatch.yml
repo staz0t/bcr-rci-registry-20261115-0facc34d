@@ -1,0 +1,37 @@
+name: Dispatch generated site
+on:
+  push:
+    branches: [main]
+    paths: ['modules/**']
+permissions:
+  actions: read
+  contents: read
+  pull-requests: read
+jobs:
+  dispatch-generated-site:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Recover the reviewed release receipt and dispatch the exact merge
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          SITE_REPO: staz0t/bcr-rci-site-20261115-0facc34d
+          SITE_DISPATCH_TOKEN: ${{ secrets.SITE_DISPATCH_TOKEN }}
+        run: |
+          set -euo pipefail
+          pulls="$(curl --fail-with-body --silent --show-error -H 'Accept: application/vnd.github+json' -H "Authorization: Bearer $GITHUB_TOKEN" -H 'X-GitHub-Api-Version: 2022-11-28' "https://api.github.com/repos/$GITHUB_REPOSITORY/pulls?state=closed&base=main&sort=updated&direction=desc&per_page=20")"
+          pr_json="$(jq -c --arg sha "$GITHUB_SHA" '[.[] | select(.merged_at != null and .merge_commit_sha == $sha)]' <<<"$pulls")"
+          test "$(jq 'length' <<<"$pr_json")" -eq 1
+          pr_head="$(jq -r '.[0].head.sha' <<<"$pr_json")"
+          pr_number="$(jq -r '.[0].number' <<<"$pr_json")"
+          runs="$(curl --fail-with-body --silent --show-error -H 'Accept: application/vnd.github+json' -H "Authorization: Bearer $GITHUB_TOKEN" -H 'X-GitHub-Api-Version: 2022-11-28' "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/workflows/validate.yml/runs?event=pull_request&status=completed&head_sha=$pr_head")"
+          run_id="$(jq -r '[.workflow_runs[] | select(.conclusion == "success")] | if length == 1 then .[0].id else empty end' <<<"$runs")"
+          test -n "$run_id"
+          artifacts="$(curl --fail-with-body --silent --show-error -H 'Accept: application/vnd.github+json' -H "Authorization: Bearer $GITHUB_TOKEN" -H 'X-GitHub-Api-Version: 2022-11-28' "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/runs/$run_id/artifacts")"
+          artifact_id="$(jq -r --arg name "reviewed-release-$pr_head" '[.artifacts[] | select(.name == $name and .expired == false)] | if length == 1 then .[0].id else empty end' <<<"$artifacts")"
+          test -n "$artifact_id"
+          curl --fail-with-body --location --silent --show-error -H 'Accept: application/vnd.github+json' -H "Authorization: Bearer $GITHUB_TOKEN" -H 'X-GitHub-Api-Version: 2022-11-28' "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id/zip" -o reviewed.zip
+          unzip -q reviewed.zip -d reviewed
+          reviewed="$(jq -c --arg head "$pr_head" 'select(.pr_head == $head)' reviewed/reviewed-release.json)"
+          test -n "$reviewed"
+          payload="$(jq -cn --arg repo "$GITHUB_REPOSITORY" --arg sha "$GITHUB_SHA" --arg head "$pr_head" --argjson number "$pr_number" --argjson reviewed "$reviewed" '{event_type:"on-registry-trigger",client_payload:{registryRepo:$repo,registryCommit:$sha,reviewedHead:$head,reviewedPullRequest:$number,reviewedRelease:$reviewed}}')"
+          curl --fail-with-body --silent --show-error -X POST -H 'Accept: application/vnd.github+json' -H "Authorization: Bearer $SITE_DISPATCH_TOKEN" -H 'X-GitHub-Api-Version: 2022-11-28' "https://api.github.com/repos/$SITE_REPO/dispatches" -d "$payload"
