@@ -1,0 +1,17 @@
+{
+  "homepage": "https://github.com/arnodorian1337/bcr-rci-source-20261115-0facc34d",
+  "maintainers": [
+    {
+      "name": "Controlled source owner",
+      "github": "arnodorian1337",
+      "github_user_id": 148738644
+    }
+  ],
+  "repository": [
+    "github:arnodorian1337/bcr-rci-source-20261115-0facc34d"
+  ],
+  "versions": [
+    "1.0.0"
+  ],
+  "yanked_versions": {}
+}
